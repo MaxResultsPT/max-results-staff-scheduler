@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Max Results | Staff Schedule</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f2f6fb;color:#11263f;font:16px system-ui,sans-serif}
+header{background:#102941;color:white;padding:26px max(20px,calc((100% - 1120px)/2))}
+header small{color:#b8daf8}h1{margin:4px 0}h2{margin:0 0 14px;font-size:1.2rem}h3{margin:0 0 8px}
+main{max-width:1160px;margin:auto;padding:20px}.panel,article,details{background:white;border:1px solid #d2dfec;border-radius:12px;padding:16px}
+nav,.actions,.row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}nav{margin-bottom:16px}
+button,input,select{font:inherit;color:inherit;border:1px solid #95a9be;border-radius:8px;background:white;padding:8px 12px;min-height:44px}
+button{cursor:pointer}button.primary{background:#075da8;border-color:#075da8;color:white}button[disabled]{opacity:.55;cursor:wait}
+label{display:grid;gap:5px}form{display:grid;gap:12px}form .row label{flex:1;min-width:130px}.login{max-width:420px;margin:auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.day{min-width:0}.booking{border-left:3px solid #1682d4;padding-left:10px}
+.booking + .booking{margin-top:14px}.muted{color:#4b6380}.roll{display:grid;gap:8px;margin:12px 0}
+.roll label{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:8px;border-bottom:1px solid #e6edf5}
+summary{cursor:pointer}.stack{display:grid;gap:12px}#notice{white-space:pre-wrap}pre{white-space:pre-wrap;font:inherit}
+dialog{max-width:min(560px,calc(100% - 24px));width:100%;max-height:90vh;padding:22px;border:1px solid #aac1d9;border-radius:14px;color:inherit}
+dialog::backdrop{background:#0c233d80}
+</style>
+</head>
+<body>
+<header><small>Max Results Personal Training</small><h1>Staff Schedule</h1></header>
+<main><p id="notice" role="status" aria-live="polite"></p><div id="app"></div></main>
+<dialog id="bookingDialog"></dialog>
+<script type="module" src="./app.js"></script>
+</body></html>
