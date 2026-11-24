@@ -14,7 +14,7 @@ const dateKey = date => {
 };
 const shift = (day, amount) => new Date(Date.parse(day+'T00:00:00Z')+amount*86400000).toISOString().slice(0,10);
 const today = () => dateKey(new Date());
-let selected = today(), mode = 'Today', staff, members = [], team = [], db;
+let selected = today(), mode = 'Today', staff, members = [], team = [], colours = new Map(), db;
 
 function node(parent, tag, value) {
   const item = document.createElement(tag);
@@ -114,6 +114,10 @@ async function render(){
     data(db.from('members').select('id,name').order('name')),
     data(db.from('staff').select('id,name,role').in('role',['owner','trainer']).order('name'))
   ]);
+  if(calendar || owner){
+    const savedColours=await data(db.rpc('trainer_calendar_colours'));
+    colours=new Map(savedColours.map(item=>[item.trainer_id,item.colour]));
+  }
   app.replaceChildren();
   const nav=node(app,'nav');
   const date=field(nav,'Schedule date','date',selected);
@@ -129,6 +133,7 @@ async function render(){
   if(owner){
     button(nav,'New booking',()=>editBooking(),true);
     button(nav,'Add member',addMember);
+    button(nav,'Trainer colours',editTrainerColour);
   }
   button(nav,'Sign out',async()=>{await data(db.auth.signOut());await login();});
   if(calendar){
@@ -206,7 +211,7 @@ function renderCalendar(days,sessions,owner){
   const legend=node(app,'div');legend.className='calendar-legend';
   const trainers=new Map(sessions.map(item=>[item.trainer_id,item]));
   for(const trainer of [...trainers.values()].sort((a,b)=>a.trainer_name.localeCompare(b.trainer_name))){
-    const tag=node(legend,'span',trainer.trainer_name);applyColour(tag,trainer.colour_index);
+    const tag=node(legend,'span',trainer.trainer_name);applyColour(tag,trainer.trainer_id,trainer.colour_index);
   }
   const events=sessions.map(session=>({
     ...session,day:dateKey(new Date(session.starts)),minute:minutesAt(new Date(session.starts))
@@ -255,15 +260,41 @@ function renderCalendar(days,sessions,owner){
         card.style.height=Math.min(last-event.minute,Math.max(event.duration,34))+'px';
         card.style.left=(100*event.lane/group.lanes.length)+'%';
         card.style.width=(100/group.lanes.length)+'%';
-        applyColour(card,event.colour_index);
+        applyColour(card,event.trainer_id,event.colour_index);
       }
     }
   }
 }
-function applyColour(element,index){
-  const [background,ink]=trainerColour(index);
+function applyColour(element,id,index){
+  const background=colours.get(id)||trainerColour(index)[1];
   element.style.setProperty('--event-bg',background);
-  element.style.setProperty('--event-ink',ink);
+  element.style.setProperty('--event-ink',colourText(background));
+}
+function colourText(background){
+  if(!background.startsWith('#')) return '#ffffff';
+  const channels=[1,3,5].map(offset=>parseInt(background.slice(offset,offset+2),16)/255);
+  const [r,g,b]=channels.map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4);
+  return .2126*r+.7152*g+.0722*b>.179?'#000000':'#ffffff';
+}
+function editTrainerColour(){
+  dialog.replaceChildren();
+  const form=node(dialog,'form');
+  node(form,'h2','Trainer colours');
+  const trainer=select(form,'Trainer',team.map(person=>[person.id,person.name]));
+  const colour=field(form,'Calendar colour','color');
+  const sync=()=>{colour.value=colours.get(trainer.value)||'#16559c';};
+  trainer.onchange=sync;
+  sync();
+  async function save(value){
+    await data(db.rpc('set_trainer_colour',{target:trainer.value,colour:value}));
+    dialog.close();
+    await render();
+    notice.textContent='Trainer colour saved.';
+  }
+  button(form,'Save colour',()=>save(colour.value),true);
+  button(form,'Use automatic colour',()=>save(null));
+  button(form,'Close',()=>dialog.close());
+  dialog.showModal();
 }
 function addMember(){
   dialog.replaceChildren();
