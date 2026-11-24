@@ -134,6 +134,7 @@ async function render(){
     button(nav,'New booking',()=>editBooking(),true);
     button(nav,'Add member',addMember);
     button(nav,'Trainer colours',editTrainerColour);
+    button(nav,'Add trainer',addTrainer);
   }
   button(nav,'Sign out',async()=>{await data(db.auth.signOut());await login();});
   if(calendar){
@@ -294,6 +295,50 @@ function editTrainerColour(){
   button(form,'Save colour',()=>save(colour.value),true);
   button(form,'Use automatic colour',()=>save(null));
   button(form,'Close',()=>dialog.close());
+  dialog.showModal();
+}
+function addTrainer(){
+  dialog.replaceChildren();
+  const form=node(dialog,'form');
+  node(form,'h2','Add trainer');
+  const name=field(form,'Trainer name','text');
+  const email=field(form,'Email (used to sign in)','email');
+  const password=field(form,'Password','password');
+  name.maxLength=100;
+  email.maxLength=254;
+  password.minLength=12;
+  password.maxLength=72;
+  password.autocomplete='new-password';
+  for(const input of [name,email,password]) input.required=true;
+  const submit=node(form,'button','Create trainer');
+  submit.type='submit';
+  submit.className='primary';
+  const close=button(form,'Close',()=>dialog.close());
+  form.onsubmit=event=>{
+    event.preventDefault();
+    run(async()=>{
+      close.disabled=true;
+      try{
+        const {session}=await data(db.auth.getSession());
+        if(!session) throw new Error('Sign in again.');
+        const endpoint=SUPABASE_URL.replace(/\/$/,'')+'/functions/v1/create-trainer';
+        const response=await fetch(endpoint,{
+          method:'POST',
+          headers:{Authorization:'Bearer '+session.access_token,apikey:SUPABASE_PUBLIC_KEY,
+            'Content-Type':'application/json'},
+          body:JSON.stringify({name:name.value,email:email.value,password:password.value})
+        });
+        const result=await response.json().catch(()=>null);
+        if(!response.ok) throw new Error(response.status===404
+          ? 'Deploy the create-trainer Edge Function in Supabase first.'
+          : result?.error||'Could not create the trainer.');
+        password.value='';
+        dialog.close();
+        await render();
+        notice.textContent=result.name+' can now sign in with the email and password you set.';
+      }finally{close.disabled=false;}
+    },submit);
+  };
   dialog.showModal();
 }
 function addMember(){
