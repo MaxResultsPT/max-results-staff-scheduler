@@ -137,6 +137,7 @@ async function render(){
   const menu=node(options,'div'); menu.className='actions';
   if(owner){
     button(menu,'Add member',addMember);
+    button(menu,'Set member away',setMemberAway);
     button(menu,'Trainer colours',editTrainerColour);
     button(menu,'Add trainer',addTrainer);
   }
@@ -191,7 +192,10 @@ function showBooking(panel,session,owner){
       await render();notice.textContent='Roll call saved.';
     },true);
   }
-  if(owner && !session.cancelled) button(actions,'Edit booking',()=>editBooking(session));
+  if(owner && !session.cancelled){
+    if(session.roster.length<session.capacity) button(actions,'Add one-off member',()=>addOneOffMember(session.id,session.roster));
+    button(actions,'Edit booking',()=>editBooking(session));
+  }
 }
 const trainerPalette=[
   ['#e1efff','#16559c'],['#e4f5ec','#156044'],['#fce5ed','#982d59'],
@@ -291,6 +295,11 @@ function showCalendarRoster(label,event,owner){
     dialog.close();
     editBooking(session);
   },true);
+  if(owner && (event.member_names?.length||0)<event.capacity) button(actions,'Add one-off member',async()=>{
+    const roster=await data(db.from('roster').select('member_id').eq('session_id',event.id));
+    dialog.close();
+    addOneOffMember(event.id,roster);
+  });
   button(actions,'Close',()=>dialog.close());
   dialog.showModal();
 }
@@ -386,6 +395,40 @@ function addTrainer(){
       }finally{close.disabled=false;}
     },submit);
   };
+  dialog.showModal();
+}
+function setMemberAway(){
+  dialog.replaceChildren();
+  const form=node(dialog,'form');node(form,'h2','Set member away');
+  const member=select(form,'Member',[['','Choose a member'],...members.map(person=>[person.id,person.name])]);
+  const first=field(form,'First day away','date',today());
+  const last=field(form,'Last day away (inclusive)','date',today());
+  for(const input of [member,first,last]) input.required=true;
+  button(form,'Save away dates',async()=>{
+    if(!form.reportValidity()) return;
+    if(last.value<first.value) throw new Error('Last day must be on or after the first day.');
+    const updated=await data(db.rpc('set_member_away',{person:Number(member.value),from_day:first.value,to_day:last.value}));
+    dialog.close();await render();
+    notice.textContent='Away dates saved. '+updated+' existing roll call'+(updated===1?'':'s')+' updated.';
+  },true);
+  button(form,'Close',()=>dialog.close());
+  dialog.showModal();
+}
+function addOneOffMember(booking,roster){
+  dialog.replaceChildren();
+  const form=node(dialog,'form');node(form,'h2','Add one-off member');
+  node(form,'p','This booking only.');
+  const booked=new Set(roster.map(person=>person.member_id));
+  const choices=members.filter(person=>!booked.has(person.id));
+  const member=select(form,'Member',[['','Choose a member'],...choices.map(person=>[person.id,person.name])]);
+  member.required=true;
+  button(form,'Add to session',async()=>{
+    if(!form.reportValidity()) return;
+    await data(db.rpc('add_one_off_member',{booking,person:Number(member.value)}));
+    dialog.close();await render();
+    notice.textContent='Member added to this session.';
+  },true);
+  button(form,'Close',()=>dialog.close());
   dialog.showModal();
 }
 function addMember(){
