@@ -128,6 +128,7 @@ async function render(){
     const savedColours=await data(db.rpc('trainer_calendar_colours'));
     colours=new Map(savedColours.map(item=>[item.trainer_id,item.colour]));
   }
+  const repeatConflicts=owner?await data(db.rpc('weekly_repeat_conflicts')):[];
   app.replaceChildren();
   const nav=node(app,'nav');
   const date=field(nav,'Schedule date','date',selected);
@@ -151,6 +152,11 @@ async function render(){
     button(menu,'Manage users',manageUsers);
   }
   button(menu,'Sign out',async()=>{await data(db.auth.signOut());await login();});
+  for(const conflict of repeatConflicts){
+    const date=new Date(conflict.blocked_at);
+    node(app,'p','Weekly repeat paused for '+conflict.trainer_name+' on '+dateKey(date)
+      +' at '+timeFormat.format(date)+' because another booking overlaps.').className='repeat-warning';
+  }
   if(calendar){
     renderCalendar(days,sessions,owner);
     return;
@@ -535,9 +541,22 @@ function editBooking(session){
   for(const input of [day,time,duration]) input.required=true;
   const trainer=select(form,'Trainer',team.map(person=>[person.id,person.name]),session?.trainer);
   const capacity=select(form,'Session size',[['1','1:1'],['3','3:1'],['6','6:1']],session?.capacity??3);
-  const repeat=session?null:field(form,'Number of weekly occurrences','number',1);
-  if(repeat){repeat.min=1;repeat.max=52;repeat.required=true;}
+  const recurrence=select(form,session?'Weekly repeat':'Repeat',session
+    ? [['keep','Keep current repeat settings'],['indefinite','Repeat weekly until cancelled']]
+    : [['single','One session'],['finite','Repeat for a set number of weeks'],['indefinite','Repeat weekly until cancelled']]);
+  const repeat=session?null:field(form,'Number of weekly occurrences','number',2);
   const scope=session?.series_id?select(form,'Apply to',[['one','This session'],['following','This and future sessions']]):null;
+  function syncRepeat(){
+    if(repeat){
+      const finite=recurrence.value==='finite';
+      repeat.disabled=!finite;
+      repeat.parentElement.hidden=!finite;
+    }
+    if(scope && recurrence.value==='indefinite') scope.value='following';
+  }
+  if(repeat){repeat.min=2;repeat.max=52;repeat.required=true;}
+  recurrence.onchange=syncRepeat;
+  syncRepeat();
   const roster=node(form,'div');roster.className='stack';
   const initial=session?.roster.map(member=>member.member_id)||[];
   let picks=[];
@@ -552,10 +571,10 @@ function editBooking(session){
   const actions=node(form,'div');actions.className='actions';
   button(actions,'Save booking',async()=>{
     if(!form.reportValidity()) return;
-    await data(db.rpc('save_booking',{booking:session?.id??null,following:scope?.value==='following',
+    await data(db.rpc('save_booking',{booking:session?.id??null,following:scope?.value==='following' || recurrence.value==='indefinite',
       trainer_id:trainer.value,local_start:day.value+'T'+time.value,minutes:Number(duration.value),
       places:Number(capacity.value),member_ids:picks.map(pick=>pick.value).filter(Boolean).map(Number),
-      repeat_weeks:repeat?Number(repeat.value):1}));
+      repeat_weeks:recurrence.value==='indefinite'?0:recurrence.value==='finite'?Number(repeat.value):1}));
     selected=day.value;dialog.close();await render();
   },true);
   if(session) button(actions,'Cancel booking',async()=>{
