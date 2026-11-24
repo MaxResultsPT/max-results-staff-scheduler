@@ -108,7 +108,7 @@ async function render(){
   const days=dateRange(selected);
   const calendar=mode==='Team calendar';
   const sessions=calendar
-    ? await data(db.rpc('team_calendar',{first_day:days[0],last_day:days.at(-1)}))
+    ? await data(db.rpc('team_calendar_with_roster',{first_day:days[0],last_day:days.at(-1)}))
     : (await bookings(days[0],days[0])).filter(item=>item.trainer===staff.id && !item.cancelled);
   if(owner) [members,team]=await Promise.all([
     data(db.from('members').select('id,name').order('name')),
@@ -258,7 +258,7 @@ function renderCalendar(days,sessions,owner){
         const label=timeFormat.format(new Date(event.starts))+' · '+event.trainer_name+' · '+event.capacity+':1';
         const card=calendarCard(column,label,event,owner);
         card.className='calendar-event';
-        card.title=label;
+        card.title=label+' — '+rosterText(event);
         card.style.top=(event.minute-first)+'px';
         card.style.height=Math.min(last-event.minute,Math.max(event.duration,34))+'px';
         card.style.left=(100*event.lane/group.lanes.length)+'%';
@@ -268,11 +268,31 @@ function renderCalendar(days,sessions,owner){
     }
   }
 }
+function rosterText(event){
+  return event.member_names?.length ? event.member_names.join(', ') : 'No members booked';
+}
 function calendarCard(parent,label,event,owner){
-  return owner?button(parent,label,async()=>{
+  const card=button(parent,label,()=>showCalendarRoster(label,event,owner));
+  node(card,'span',rosterText(event)).className='calendar-roster';
+  return card;
+}
+function showCalendarRoster(label,event,owner){
+  dialog.replaceChildren();
+  node(dialog,'h2',label);
+  if(event.member_names?.length){
+    const list=node(dialog,'ul');
+    for(const name of event.member_names) node(list,'li',name);
+  }else{
+    node(dialog,'p','No members booked');
+  }
+  const actions=node(dialog,'div'); actions.className='actions';
+  if(owner) button(actions,'Edit booking',async()=>{
     const session=await data(db.from('sessions').select('*,roster(member_id,status,members(name))').eq('id',event.id).single());
+    dialog.close();
     editBooking(session);
-  }):node(parent,'div',label);
+  },true);
+  button(actions,'Close',()=>dialog.close());
+  dialog.showModal();
 }
 function renderPhoneCalendar(events,owner){
   const section=node(app,'section'); section.className='phone-calendar';
