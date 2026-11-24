@@ -65,7 +65,7 @@ function select(parent, label, options, value) {
   return input;
 }
 function dateRange(day) {
-  if(mode!=='Week') return [day];
+  if(mode!=='Team calendar') return [day];
   const monday=shift(day,-((new Date(day+'T00:00:00Z').getUTCDay()+6)%7));
   return Array.from({length:7},(_,index)=>shift(monday,index));
 }
@@ -106,7 +106,10 @@ async function start(){
 async function render(){
   const owner=staff.role==='owner';
   const days=dateRange(selected);
-  const sessions=await bookings(days[0],days.at(-1));
+  const calendar=mode==='Team calendar';
+  const sessions=calendar
+    ? await data(db.rpc('team_calendar',{first_day:days[0],last_day:days.at(-1)}))
+    : (await bookings(days[0],days[0])).filter(item=>item.trainer===staff.id && !item.cancelled);
   if(owner) [members,team]=await Promise.all([
     data(db.from('members').select('id,name').order('name')),
     data(db.from('staff').select('id,name,role').in('role',['owner','trainer']).order('name'))
@@ -115,21 +118,41 @@ async function render(){
   const nav=node(app,'nav');
   const date=field(nav,'Schedule date','date',selected);
   date.onchange=()=>{if(date.value) run(async()=>{selected=date.value;await render();});};
-  button(nav,'Today',async()=>{mode='Today';selected=today();await render();});
-  button(nav,'Week',async()=>{mode='Week';await render();});
+  for(const view of ['My sessions','Team calendar']){
+    const tab=button(nav,view,async()=>{
+      mode=view==='Team calendar'?view:'Today';
+      if(mode==='Today') selected=today();
+      await render();
+    });
+    tab.setAttribute('aria-pressed',String(calendar===(view==='Team calendar')));
+  }
   if(owner){
     button(nav,'New booking',()=>editBooking(),true);
     button(nav,'Add member',addMember);
   }
   button(nav,'Sign out',async()=>{await data(db.auth.signOut());await login();});
+  if(calendar){
+    renderCalendar(days,sessions,owner);
+    return;
+  }
   const grid=node(app,'div'); grid.className='grid';
   for(const day of days){
     const panel=node(grid,'article'); panel.className='day stack';
     node(panel,'h2',headings.format(new Date(day+'T00:00:00Z')));
     const entries=sessions.filter(item=>dateKey(new Date(item.starts))===day);
     if(!entries.length) node(panel,'p','No sessions scheduled.').className='muted';
-    for(const session of entries) showBooking(panel,session,owner);
+    const now=Date.now();
+    const upcoming=entries.filter(item=>Date.parse(item.starts)>now);
+    const started=entries.filter(item=>Date.parse(item.starts)<=now);
+    for(const [title,group] of [['Upcoming',upcoming],['Started or completed',started]]){
+      if(!group.length) continue;
+      node(panel,'h3',title);
+      for(const session of group) showBooking(panel,session,owner);
+    }
   }
+}
+function canMarkSession(session){
+  return !session.cancelled && Date.parse(session.starts)<=Date.now();
 }
 function showBooking(panel,session,owner){
   const card=node(panel,'details');card.className='booking';
@@ -137,6 +160,7 @@ function showBooking(panel,session,owner){
   const pending=session.roster.filter(member=>member.status==='Unmarked').length;
   node(card,'summary',timeFormat.format(start)+' · '+session.capacity+':1 · '+
     (session.cancelled?'Cancelled':pending?pending+' to mark':session.roster.length?'Complete':'Empty roster'));
+  if(canMarkSession(session) && pending) card.open=true;
   node(card,'p',session.duration+' min · '+(team.find(person=>person.id===session.trainer)?.name||staff.name)+
     ' · '+(session.capacity-session.roster.length)+' spare').className='muted';
   const roll=node(card,'div');roll.className='roll';
@@ -144,7 +168,7 @@ function showBooking(panel,session,owner){
     member_id:member.member_id,
     select:select(roll,member.members?.name||'Member',statuses.map(status=>[status,status]),member.status)
   }));
-  const canMark=!session.cancelled && +start<=Date.now();
+  const canMark=canMarkSession(session);
   for(const pick of picks) pick.select.disabled=!canMark;
   const actions=node(card,'div');actions.className='actions';
   if(canMark && picks.length){
@@ -158,6 +182,88 @@ function showBooking(panel,session,owner){
     },true);
   }
   if(owner && !session.cancelled) button(actions,'Edit booking',()=>editBooking(session));
+}
+const trainerPalette=[
+  ['#e1efff','#16559c'],['#e4f5ec','#156044'],['#fce5ed','#982d59'],
+  ['#f2e7ff','#6e389d'],['#fff0d8','#885311'],['#dbf5f6','#12626b'],
+  ['#ffe6dd','#973e26'],['#eef2ce','#526000']
+];
+function trainerColour(index){
+  if(index<trainerPalette.length) return trainerPalette[index];
+  const hue=(index*137.508)%360;
+  return ['hsl('+hue+' 70% 91%)','hsl('+hue+' 65% 28%)'];
+}
+function minutesAt(date){
+  const [hours,minutes]=timeFormat.format(date).split(':').map(Number);
+  return hours*60+minutes;
+}
+function renderCalendar(days,sessions,owner){
+  const controls=node(app,'div');controls.className='actions';
+  button(controls,'Previous week',async()=>{selected=shift(days[0],-7);await render();});
+  node(controls,'strong',headings.format(new Date(days[0]+'T00:00:00Z'))+' – '+
+    headings.format(new Date(days[6]+'T00:00:00Z')));
+  button(controls,'Next week',async()=>{selected=shift(days[0],7);await render();});
+  const legend=node(app,'div');legend.className='calendar-legend';
+  const trainers=new Map(sessions.map(item=>[item.trainer_id,item]));
+  for(const trainer of [...trainers.values()].sort((a,b)=>a.trainer_name.localeCompare(b.trainer_name))){
+    const tag=node(legend,'span',trainer.trainer_name);applyColour(tag,trainer.colour_index);
+  }
+  const events=sessions.map(session=>({
+    ...session,day:dateKey(new Date(session.starts)),minute:minutesAt(new Date(session.starts))
+  }));
+  const first=Math.floor(Math.min(360,...events.map(item=>item.minute))/60)*60;
+  const last=Math.min(1440,Math.ceil(Math.max(1200,...events.map(item=>item.minute+item.duration))/60)*60);
+  const frame=node(app,'div');frame.className='calendar-frame';
+  const grid=node(frame,'section');grid.className='week-calendar';
+  grid.setAttribute('aria-label','Weekly team timetable, Melbourne time');
+  node(grid,'div','Time').className='calendar-heading';
+  for(const day of days){
+    const title=node(grid,'div',headings.format(new Date(day+'T00:00:00Z')));
+    title.className='calendar-heading'+(day===today()?' current-day':'');
+  }
+  const clock=node(grid,'div');clock.className='clock';
+  for(let minute=first;minute<last;minute+=60){
+    const time=node(clock,'span',String(Math.floor(minute/60)).padStart(2,'0')+':00');
+    time.style.top=(minute-first)+'px';
+  }
+  for(const day of days){
+    const column=node(grid,'div');column.className='calendar-day';
+    column.style.height=(last-first)+'px';
+    const groups=[];
+    for(const event of events.filter(item=>item.day===day).sort((a,b)=>a.minute-b.minute)){
+      const end=event.minute+Math.max(event.duration,34);
+      let group=groups.at(-1);
+      if(!group || event.minute>=group.end){
+        group={lanes:[],entries:[],end};groups.push(group);
+      }
+      let lane=group.lanes.findIndex(value=>value<=event.minute);
+      if(lane<0) lane=group.lanes.length;
+      group.lanes[lane]=end;
+      group.entries.push({...event,lane});
+      group.end=Math.max(group.end,end);
+    }
+    for(const group of groups){
+      for(const event of group.entries){
+        const label=timeFormat.format(new Date(event.starts))+' · '+event.trainer_name+' · '+event.capacity+':1';
+        const card=owner?button(column,label,async()=>{
+          const session=await data(db.from('sessions').select('*,roster(member_id,status,members(name))').eq('id',event.id).single());
+          editBooking(session);
+        }):node(column,'div',label);
+        card.className='calendar-event';
+        card.title=label;
+        card.style.top=(event.minute-first)+'px';
+        card.style.height=Math.min(last-event.minute,Math.max(event.duration,34))+'px';
+        card.style.left=(100*event.lane/group.lanes.length)+'%';
+        card.style.width=(100/group.lanes.length)+'%';
+        applyColour(card,event.colour_index);
+      }
+    }
+  }
+}
+function applyColour(element,index){
+  const [background,ink]=trainerColour(index);
+  element.style.setProperty('--event-bg',background);
+  element.style.setProperty('--event-ink',ink);
 }
 function addMember(){
   dialog.replaceChildren();

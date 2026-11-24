@@ -18,6 +18,16 @@ label{display:grid;gap:5px}form{display:grid;gap:12px}form .row label{flex:1;min
 summary{cursor:pointer}.stack{display:grid;gap:12px}#notice{white-space:pre-wrap}pre{white-space:pre-wrap;font:inherit}
 dialog{max-width:min(560px,calc(100% - 24px));width:100%;max-height:90vh;padding:22px;border:1px solid #aac1d9;border-radius:14px;color:inherit}
 dialog::backdrop{background:#0c233d80}
+nav button[aria-pressed="true"]{background:#102941;color:white;border-color:#102941}
+.calendar-frame{overflow:auto;border:1px solid #d2dfec;border-radius:12px;background:white;max-height:74vh}
+.week-calendar{display:grid;grid-template-columns:55px repeat(7,minmax(135px,1fr));min-width:1000px}
+.calendar-heading{position:sticky;top:0;z-index:2;background:#f7faff;padding:12px 6px;border-bottom:1px solid #d2dfec;text-align:center;font-size:.85rem;font-weight:650}
+.current-day{background:#dbeeff;color:#075da8}
+.clock,.calendar-day{position:relative}.clock span{position:absolute;right:6px;color:#4b6380;font-size:.75rem}
+.calendar-day{border-left:1px solid #d2dfec;background:repeating-linear-gradient(to bottom,#e7eef6 0 1px,transparent 1px 60px)}
+.calendar-event{position:absolute;min-height:0;border:1px solid white;border-left:3px solid var(--event-ink);border-radius:5px;text-align:left;padding:3px 4px;overflow:hidden;background:var(--event-bg);color:var(--event-ink);font-size:.75rem;line-height:1.15;overflow-wrap:anywhere}
+.calendar-legend{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.calendar-legend span{background:var(--event-bg);color:var(--event-ink);border-left:3px solid var(--event-ink);padding:4px 8px;border-radius:5px;font-size:.8rem}
 </style>
 </head>
 <body>
