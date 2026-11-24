@@ -103,6 +103,16 @@ async function start(){
   mode='Today'; selected=today();
   await render();
 }
+async function loadMembers(){
+  const all=[];
+  const pageSize=200;
+  for(let offset=0;;offset+=pageSize){
+    const page=await data(db.from('members').select('id,name,archived')
+      .order('name').order('id').range(offset,offset+pageSize-1));
+    all.push(...page);
+    if(page.length<pageSize) return all;
+  }
+}
 async function render(){
   const owner=staff.role==='owner';
   const days=dateRange(selected);
@@ -111,7 +121,7 @@ async function render(){
     ? await data(db.rpc('team_calendar_with_roster',{first_day:days[0],last_day:days.at(-1)}))
     : (await bookings(days[0],days[0])).filter(item=>item.trainer===staff.id && !item.cancelled);
   if(owner) [members,team]=await Promise.all([
-    data(db.from('members').select('id,name').order('name')),
+    loadMembers(),
     data(db.from('staff').select('id,name,role').in('role',['owner','trainer']).order('name'))
   ]);
   if(calendar || owner){
@@ -136,7 +146,7 @@ async function render(){
   node(options,'summary',owner?'Manage':'Account');
   const menu=node(options,'div'); menu.className='actions';
   if(owner){
-    button(menu,'Add member',addMember);
+    button(menu,'Manage members',manageMembers);
     button(menu,'Set member away',setMemberAway);
     button(menu,'Manage users',manageUsers);
   }
@@ -438,7 +448,7 @@ function addTrainer(){
 function setMemberAway(){
   dialog.replaceChildren();
   const form=node(dialog,'form');node(form,'h2','Set member away');
-  const member=select(form,'Member',[['','Choose a member'],...members.map(person=>[person.id,person.name])]);
+  const member=select(form,'Member',[['','Choose a member'],...members.filter(person=>!person.archived).map(person=>[person.id,person.name])]);
   const first=field(form,'First day away','date',today());
   const last=field(form,'Last day away (inclusive)','date',today());
   for(const input of [member,first,last]) input.required=true;
@@ -457,7 +467,7 @@ function addOneOffMember(booking,roster){
   const form=node(dialog,'form');node(form,'h2','Add one-off member');
   node(form,'p','This booking only.');
   const booked=new Set(roster.map(person=>person.member_id));
-  const choices=members.filter(person=>!booked.has(person.id));
+  const choices=members.filter(person=>!person.archived && !booked.has(person.id));
   const member=select(form,'Member',[['','Choose a member'],...choices.map(person=>[person.id,person.name])]);
   member.required=true;
   button(form,'Add to session',async()=>{
@@ -469,6 +479,40 @@ function addOneOffMember(booking,roster){
   button(form,'Close',()=>dialog.close());
   dialog.showModal();
 }
+function manageMembers(){
+  dialog.replaceChildren();
+  node(dialog,'h2','Manage members');
+  const actions=node(dialog,'div');actions.className='actions';
+  button(actions,'Add member',addMember,true);
+  button(actions,'Close',()=>dialog.close());
+  const search=field(dialog,'Search members','search');
+  const list=node(dialog,'div');list.className='stack member-list';
+  function show(){
+    list.replaceChildren();
+    const query=search.value.trim().toLowerCase();
+    const matches=members.filter(person=>person.name.toLowerCase().includes(query));
+    if(!matches.length) node(list,'p','No members found.');
+    for(const person of matches){
+      const card=node(list,'article');card.className='user-card';
+      node(card,'h3',person.name+(person.archived?' (archived)':''));
+      const tools=node(card,'div');tools.className='actions';
+      const update=async operation=>{
+        if(operation==='delete' && !confirm('Permanently delete '+person.name+'?')) return;
+        if(operation==='archive' && !confirm('Archive '+person.name+'? Existing bookings and attendance will be kept.')) return;
+        await data(db.rpc('manage_member',{person:person.id,operation}));
+        members=await loadMembers();
+        const error=dialog.querySelector('[role="alert"]');
+        if(error) error.remove();
+        show();
+      };
+      button(tools,person.archived?'Restore':'Archive',()=>update(person.archived?'restore':'archive'));
+      button(tools,'Delete',()=>update('delete'));
+    }
+  }
+  search.oninput=show;
+  show();
+  if(!dialog.open) dialog.showModal();
+}
 function addMember(){
   dialog.replaceChildren();
   const form=node(dialog,'form');node(form,'h2','Add member to booking roster');
@@ -476,10 +520,10 @@ function addMember(){
   button(form,'Save member',async()=>{
     if(!form.reportValidity() || !name.value.trim()) return;
     await data(db.from('members').insert({name:name.value.trim()}));
-    dialog.close();await render();
+    members=await loadMembers();
+    manageMembers();
   },true);
-  button(form,'Close',()=>dialog.close());
-  dialog.showModal();
+  button(form,'Back to members',manageMembers);
 }
 function editBooking(session){
   dialog.replaceChildren();
@@ -500,7 +544,8 @@ function editBooking(session){
   function drawRoster(current){
     roster.replaceChildren();
     picks=Array.from({length:Number(capacity.value)},(_,index)=>select(roster,'Spot '+(index+1),
-      [['','Spare'],...members.map(member=>[member.id,member.name])],current[index]??''));
+      [['','Spare'],...members.filter(member=>!member.archived || String(member.id)===String(current[index]))
+        .map(member=>[member.id,member.name+(member.archived?' (archived)':'')])],current[index]??''));
   }
   drawRoster(initial);
   capacity.onchange=()=>drawRoster(picks.map(pick=>pick.value));
