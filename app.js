@@ -138,8 +138,7 @@ async function render(){
   if(owner){
     button(menu,'Add member',addMember);
     button(menu,'Set member away',setMemberAway);
-    button(menu,'Trainer colours',editTrainerColour);
-    button(menu,'Add trainer',addTrainer);
+    button(menu,'Manage users',manageUsers);
   }
   button(menu,'Sign out',async()=>{await data(db.auth.signOut());await login();});
   if(calendar){
@@ -333,69 +332,108 @@ function colourText(background){
   const [r,g,b]=channels.map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4);
   return .2126*r+.7152*g+.0722*b>.179?'#000000':'#ffffff';
 }
-function editTrainerColour(){
+async function userManagement(payload){
+  const {session}=await data(db.auth.getSession());
+  if(!session) throw new Error('Sign in again.');
+  const endpoint=SUPABASE_URL.replace(/\/$/,'')+'/functions/v1/create-trainer';
+  const response=await fetch(endpoint,{
+    method:'POST',
+    headers:{Authorization:'Bearer '+session.access_token,apikey:SUPABASE_PUBLIC_KEY,
+      'Content-Type':'application/json'},
+    body:JSON.stringify(payload)
+  });
+  const result=await response.json().catch(()=>null);
+  if(!response.ok) throw new Error(response.status===404
+    ? 'Deploy the create-trainer Edge Function in Supabase first.'
+    : result?.error||'Could not manage the staff account.');
+  return result;
+}
+
+async function manageUsers(){
+  const {users}=await userManagement({action:'list'});
+  dialog.replaceChildren();
+  node(dialog,'h2','Manage users');
+  const actions=node(dialog,'div');actions.className='actions';
+  button(actions,'Add trainer',addTrainer,true);
+  button(actions,'Close',()=>dialog.close());
+  const list=node(dialog,'div');list.className='stack';
+  for(const user of users){
+    const card=node(list,'article');card.className='user-card';
+    node(card,'h3',user.name+(user.id===staff.id?' (you)':''));
+    node(card,'p',(user.email||'No login email')+' · '+(user.role==='owner'?'Owner':'Trainer'));
+    const colour=node(card,'span',user.calendar_colour||'Automatic colour');
+    colour.className='user-colour';
+    applyColour(colour,user.id,user.colour_index);
+    if(user.role==='trainer' || user.id===staff.id){
+      const tools=node(card,'div');tools.className='actions';
+      button(tools,'Edit name or colour',()=>editUserProfile(user));
+      button(tools,'Reset password',()=>resetUserPassword(user));
+    }
+  }
+  if(!dialog.open) dialog.showModal();
+}
+function editUserProfile(user){
   dialog.replaceChildren();
   const form=node(dialog,'form');
-  node(form,'h2','Trainer colours');
-  const trainer=select(form,'Trainer',team.map(person=>[person.id,person.name]));
-  const colour=field(form,'Calendar colour','color');
-  const sync=()=>{colour.value=colours.get(trainer.value)||'#16559c';};
-  trainer.onchange=sync;
-  sync();
-  async function save(value){
-    await data(db.rpc('set_trainer_colour',{target:trainer.value,colour:value}));
-    dialog.close();
+  node(form,'h2','Edit staff profile');
+  const name=field(form,'Display name','text',user.name);
+  name.required=true;name.maxLength=100;
+  const mode=select(form,'Colour mode',[['auto','Automatic'],['custom','Custom']],user.calendar_colour?'custom':'auto');
+  const colour=field(form,'Calendar colour','color',user.calendar_colour||'#16559c');
+  const toggle=()=>{colour.disabled=mode.value==='auto';};
+  mode.onchange=toggle;toggle();
+  button(form,'Save profile',async()=>{
+    if(!form.reportValidity()) return;
+    await userManagement({action:'update',id:user.id,name:name.value,colour:mode.value==='custom'?colour.value:null});
+    if(staff.id===user.id) staff.name=name.value.trim();
     await render();
-    notice.textContent='Trainer colour saved.';
-  }
-  button(form,'Save colour',()=>save(colour.value),true);
-  button(form,'Use automatic colour',()=>save(null));
-  button(form,'Close',()=>dialog.close());
-  dialog.showModal();
+    await manageUsers();
+    notice.textContent='Staff profile saved.';
+  },true);
+  button(form,'Back to users',manageUsers);
+}
+function resetUserPassword(user){
+  dialog.replaceChildren();
+  const form=node(dialog,'form');
+  node(form,'h2','Reset password');
+  node(form,'p',user.name+' · '+(user.email||'No login email'));
+  const password=field(form,'New password (at least 12 characters)','password');
+  password.required=true;password.minLength=12;password.maxLength=72;password.autocomplete='new-password';
+  button(form,'Save new password',async()=>{
+    if(!form.reportValidity()) return;
+    if(!confirm('Set a new password for '+user.name+'?')) return;
+    await userManagement({action:'reset',id:user.id,password:password.value});
+    password.value='';
+    await manageUsers();
+    notice.textContent='Password updated. Use the new password for the next sign-in.';
+  },true);
+  button(form,'Back to users',manageUsers);
 }
 function addTrainer(){
   dialog.replaceChildren();
   const form=node(dialog,'form');
   node(form,'h2','Add trainer');
-  const name=field(form,'Trainer name','text');
+  const name=field(form,'Display name','text');
   const email=field(form,'Email (used to sign in)','email');
-  const password=field(form,'Password','password');
-  name.maxLength=100;
-  email.maxLength=254;
-  password.minLength=12;
-  password.maxLength=72;
+  const password=field(form,'Password (at least 12 characters)','password');
+  name.maxLength=100;email.maxLength=254;password.minLength=12;password.maxLength=72;
   password.autocomplete='new-password';
   for(const input of [name,email,password]) input.required=true;
-  const submit=node(form,'button','Create trainer');
-  submit.type='submit';
-  submit.className='primary';
-  const close=button(form,'Close',()=>dialog.close());
+  const submit=node(form,'button','Create trainer');submit.type='submit';submit.className='primary';
+  const back=button(form,'Back to users',manageUsers);
   form.onsubmit=event=>{
     event.preventDefault();
     run(async()=>{
-      close.disabled=true;
+      back.disabled=true;
       try{
-        const {session}=await data(db.auth.getSession());
-        if(!session) throw new Error('Sign in again.');
-        const endpoint=SUPABASE_URL.replace(/\/$/,'')+'/functions/v1/create-trainer';
-        const response=await fetch(endpoint,{
-          method:'POST',
-          headers:{Authorization:'Bearer '+session.access_token,apikey:SUPABASE_PUBLIC_KEY,
-            'Content-Type':'application/json'},
-          body:JSON.stringify({name:name.value,email:email.value,password:password.value})
-        });
-        const result=await response.json().catch(()=>null);
-        if(!response.ok) throw new Error(response.status===404
-          ? 'Deploy the create-trainer Edge Function in Supabase first.'
-          : result?.error||'Could not create the trainer.');
+        const result=await userManagement({action:'create',name:name.value,email:email.value,password:password.value});
         password.value='';
-        dialog.close();
         await render();
+        await manageUsers();
         notice.textContent=result.name+' can now sign in with the email and password you set.';
-      }finally{close.disabled=false;}
+      }finally{back.disabled=false;}
     },submit);
   };
-  dialog.showModal();
 }
 function setMemberAway(){
   dialog.replaceChildren();
