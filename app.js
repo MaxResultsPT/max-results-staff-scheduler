@@ -142,7 +142,7 @@ async function render(){
   }
   button(menu,'Sign out',async()=>{await data(db.auth.signOut());await login();});
   if(calendar){
-    renderCalendar(days,sessions,owner,date);
+    renderCalendar(days,sessions,owner);
     return;
   }
   const grid=node(app,'div'); grid.className='grid';
@@ -207,7 +207,7 @@ function minutesAt(date){
   const [hours,minutes]=timeFormat.format(date).split(':').map(Number);
   return hours*60+minutes;
 }
-function renderCalendar(days,sessions,owner,dateField){
+function renderCalendar(days,sessions,owner){
   const controls=node(app,'div');controls.className='actions week-controls';
   button(controls,'Previous week',async()=>{selected=shift(days[0],-7);await render();});
   node(controls,'strong',headings.format(new Date(days[0]+'T00:00:00Z'))+' – '+
@@ -221,7 +221,7 @@ function renderCalendar(days,sessions,owner,dateField){
   const events=sessions.map(session=>({
     ...session,day:dateKey(new Date(session.starts)),minute:minutesAt(new Date(session.starts))
   }));
-  renderPhoneCalendar(days,events,owner,dateField);
+  renderPhoneCalendar(events,owner);
   const first=Math.floor(Math.min(360,...events.map(item=>item.minute))/60)*60;
   const last=Math.min(1440,Math.ceil(Math.max(1200,...events.map(item=>item.minute+item.duration))/60)*60);
   const frame=node(app,'div');frame.className='calendar-frame';
@@ -274,37 +274,24 @@ function calendarCard(parent,label,event,owner){
     editBooking(session);
   }):node(parent,'div',label);
 }
-function renderPhoneCalendar(days,events,owner,dateField){
+function renderPhoneCalendar(events,owner){
   const section=node(app,'section'); section.className='phone-calendar';
   section.setAttribute('aria-label','Team timetable by day');
-  const picker=node(section,'div'); picker.className='day-picker';
+  const controls=node(section,'div'); controls.className='day-controls';
+  button(controls,'Previous day',async()=>{selected=shift(selected,-1);await render();});
+  button(controls,'Next day',async()=>{selected=shift(selected,1);await render();});
   const list=node(section,'div'); list.className='stack';
-  const buttons=[];
-  function show(day){
-    selected=day;
-    dateField.value=day;
-    for(const [key,control] of buttons) control.setAttribute('aria-pressed',String(key===day));
-    list.replaceChildren();
-    node(list,'h2',headings.format(new Date(day+'T00:00:00Z')));
-    const daily=events.filter(event=>event.day===day).sort((a,b)=>a.minute-b.minute);
-    if(!daily.length) node(list,'p','No sessions scheduled.').className='muted';
-    for(const event of daily){
-      const start=new Date(event.starts);
-      const end=new Date(+start+event.duration*60000);
-      const label=timeFormat.format(start)+'–'+timeFormat.format(end)+' · '+event.trainer_name+' · '+event.capacity+':1';
-      const card=calendarCard(list,label,event,owner);
-      card.className='phone-event';
-      applyColour(card,event.trainer_id,event.colour_index);
-    }
+  node(list,'h2',headings.format(new Date(selected+'T00:00:00Z')));
+  const daily=events.filter(event=>event.day===selected).sort((a,b)=>a.minute-b.minute);
+  if(!daily.length) node(list,'p','No sessions scheduled.').className='muted';
+  for(const event of daily){
+    const start=new Date(event.starts);
+    const end=new Date(+start+event.duration*60000);
+    const label=timeFormat.format(start)+'–'+timeFormat.format(end)+' · '+event.trainer_name+' · '+event.capacity+':1';
+    const card=calendarCard(list,label,event,owner);
+    card.className='phone-event';
+    applyColour(card,event.trainer_id,event.colour_index);
   }
-  for(const day of days){
-    const date=new Date(day+'T00:00:00Z');
-    const control=button(picker,day.slice(-2),()=>show(day));
-    control.prepend(node(document.createDocumentFragment(),'small',headings.format(date).split(',')[0]));
-    control.setAttribute('aria-label',headings.format(date));
-    buttons.push([day,control]);
-  }
-  show(days.includes(selected)?selected:days[0]);
 }
 function applyColour(element,id,index){
   const background=colours.get(id)||trainerColour(index)[1];

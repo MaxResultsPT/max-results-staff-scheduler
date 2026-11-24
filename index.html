@@ -46,14 +46,9 @@ nav button[aria-pressed="true"]{background:#102941;color:white;border-color:#102
   .roll label{display:grid;justify-content:stretch}
   .roll select,.booking .actions button{width:100%}
   dialog{padding:16px;max-height:85dvh}
-  .calendar-frame{display:none}
+  .calendar-frame,.week-controls,.calendar-legend{display:none}
   .phone-calendar{display:block}
-  .week-controls{display:grid;grid-template-columns:1fr 1fr}
-  .week-controls strong{grid-row:1;grid-column:1 / -1;text-align:center}
-  .day-picker{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;margin:12px 0}
-  .day-picker button{padding:4px 0;font-size:.9rem}
-  .day-picker small{display:block;font-size:.7rem}
-  .day-picker [aria-pressed="true"]{background:#102941;color:white;border-color:#102941}
+  .day-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
   .phone-event{min-height:48px;padding:12px;border:0;border-radius:8px;text-align:left;background:var(--event-bg);color:var(--event-ink);overflow-wrap:anywhere}
 }
 </style>
@@ -62,5 +57,5 @@ nav button[aria-pressed="true"]{background:#102941;color:white;border-color:#102
 <header><small>Max Results Personal Training</small><h1>Staff Schedule</h1></header>
 <main><p id="notice" role="status" aria-live="polite"></p><div id="app"></div></main>
 <dialog id="bookingDialog"></dialog>
-<script type="module" src="./app.js?v=mobile-1"></script>
+<script type="module" src="./app.js?v=mobile-day-2"></script>
 </body></html>
