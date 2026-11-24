@@ -28,11 +28,39 @@ nav button[aria-pressed="true"]{background:#102941;color:white;border-color:#102
 .calendar-event{position:absolute;min-height:0;border:1px solid white;border-left:3px solid var(--event-ink);border-radius:5px;text-align:left;padding:3px 4px;overflow:hidden;background:var(--event-bg);color:var(--event-ink);font-size:.75rem;line-height:1.15;overflow-wrap:anywhere}
 .calendar-legend{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
 .calendar-legend span{background:var(--event-bg);color:var(--event-ink);border-left:3px solid var(--event-ink);padding:4px 8px;border-radius:5px;font-size:.8rem}
+.view-tabs{display:flex;gap:8px}
+.schedule-menu{padding:0 12px;min-height:44px;position:relative}
+.schedule-menu summary{line-height:42px}
+.schedule-menu[open] .actions{margin:0 0 10px}
+.phone-calendar{display:none}
+#notice:empty{display:none}
+@media(max-width:700px){
+  header{padding:16px}h1{font-size:1.5rem}main{padding:12px}
+  nav{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
+  nav label,input,select{min-width:0}
+  .view-tabs{grid-row:1;grid-column:1 / -1;display:grid;grid-template-columns:1fr 1fr}
+  .schedule-menu{grid-column:1 / -1}
+  .grid{grid-template-columns:minmax(0,1fr)}
+  .day,.booking{padding:12px}
+  .booking summary{min-height:44px;padding:10px 0}
+  .roll label{display:grid;justify-content:stretch}
+  .roll select,.booking .actions button{width:100%}
+  dialog{padding:16px;max-height:85dvh}
+  .calendar-frame{display:none}
+  .phone-calendar{display:block}
+  .week-controls{display:grid;grid-template-columns:1fr 1fr}
+  .week-controls strong{grid-row:1;grid-column:1 / -1;text-align:center}
+  .day-picker{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;margin:12px 0}
+  .day-picker button{padding:4px 0;font-size:.9rem}
+  .day-picker small{display:block;font-size:.7rem}
+  .day-picker [aria-pressed="true"]{background:#102941;color:white;border-color:#102941}
+  .phone-event{min-height:48px;padding:12px;border:0;border-radius:8px;text-align:left;background:var(--event-bg);color:var(--event-ink);overflow-wrap:anywhere}
+}
 </style>
 </head>
 <body>
 <header><small>Max Results Personal Training</small><h1>Staff Schedule</h1></header>
 <main><p id="notice" role="status" aria-live="polite"></p><div id="app"></div></main>
 <dialog id="bookingDialog"></dialog>
-<script type="module" src="./app.js"></script>
+<script type="module" src="./app.js?v=mobile-1"></script>
 </body></html>

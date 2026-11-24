@@ -122,23 +122,27 @@ async function render(){
   const nav=node(app,'nav');
   const date=field(nav,'Schedule date','date',selected);
   date.onchange=()=>{if(date.value) run(async()=>{selected=date.value;await render();});};
+  const views=node(nav,'div'); views.className='view-tabs';
   for(const view of ['My sessions','Team calendar']){
-    const tab=button(nav,view,async()=>{
+    const tab=button(views,view,async()=>{
       mode=view==='Team calendar'?view:'Today';
       if(mode==='Today') selected=today();
       await render();
     });
     tab.setAttribute('aria-pressed',String(calendar===(view==='Team calendar')));
   }
+  if(owner) button(nav,'New booking',()=>editBooking(),true);
+  const options=node(nav,'details'); options.className='schedule-menu';
+  node(options,'summary',owner?'Manage':'Account');
+  const menu=node(options,'div'); menu.className='actions';
   if(owner){
-    button(nav,'New booking',()=>editBooking(),true);
-    button(nav,'Add member',addMember);
-    button(nav,'Trainer colours',editTrainerColour);
-    button(nav,'Add trainer',addTrainer);
+    button(menu,'Add member',addMember);
+    button(menu,'Trainer colours',editTrainerColour);
+    button(menu,'Add trainer',addTrainer);
   }
-  button(nav,'Sign out',async()=>{await data(db.auth.signOut());await login();});
+  button(menu,'Sign out',async()=>{await data(db.auth.signOut());await login();});
   if(calendar){
-    renderCalendar(days,sessions,owner);
+    renderCalendar(days,sessions,owner,date);
     return;
   }
   const grid=node(app,'div'); grid.className='grid';
@@ -203,8 +207,8 @@ function minutesAt(date){
   const [hours,minutes]=timeFormat.format(date).split(':').map(Number);
   return hours*60+minutes;
 }
-function renderCalendar(days,sessions,owner){
-  const controls=node(app,'div');controls.className='actions';
+function renderCalendar(days,sessions,owner,dateField){
+  const controls=node(app,'div');controls.className='actions week-controls';
   button(controls,'Previous week',async()=>{selected=shift(days[0],-7);await render();});
   node(controls,'strong',headings.format(new Date(days[0]+'T00:00:00Z'))+' – '+
     headings.format(new Date(days[6]+'T00:00:00Z')));
@@ -217,6 +221,7 @@ function renderCalendar(days,sessions,owner){
   const events=sessions.map(session=>({
     ...session,day:dateKey(new Date(session.starts)),minute:minutesAt(new Date(session.starts))
   }));
+  renderPhoneCalendar(days,events,owner,dateField);
   const first=Math.floor(Math.min(360,...events.map(item=>item.minute))/60)*60;
   const last=Math.min(1440,Math.ceil(Math.max(1200,...events.map(item=>item.minute+item.duration))/60)*60);
   const frame=node(app,'div');frame.className='calendar-frame';
@@ -251,10 +256,7 @@ function renderCalendar(days,sessions,owner){
     for(const group of groups){
       for(const event of group.entries){
         const label=timeFormat.format(new Date(event.starts))+' · '+event.trainer_name+' · '+event.capacity+':1';
-        const card=owner?button(column,label,async()=>{
-          const session=await data(db.from('sessions').select('*,roster(member_id,status,members(name))').eq('id',event.id).single());
-          editBooking(session);
-        }):node(column,'div',label);
+        const card=calendarCard(column,label,event,owner);
         card.className='calendar-event';
         card.title=label;
         card.style.top=(event.minute-first)+'px';
@@ -265,6 +267,44 @@ function renderCalendar(days,sessions,owner){
       }
     }
   }
+}
+function calendarCard(parent,label,event,owner){
+  return owner?button(parent,label,async()=>{
+    const session=await data(db.from('sessions').select('*,roster(member_id,status,members(name))').eq('id',event.id).single());
+    editBooking(session);
+  }):node(parent,'div',label);
+}
+function renderPhoneCalendar(days,events,owner,dateField){
+  const section=node(app,'section'); section.className='phone-calendar';
+  section.setAttribute('aria-label','Team timetable by day');
+  const picker=node(section,'div'); picker.className='day-picker';
+  const list=node(section,'div'); list.className='stack';
+  const buttons=[];
+  function show(day){
+    selected=day;
+    dateField.value=day;
+    for(const [key,control] of buttons) control.setAttribute('aria-pressed',String(key===day));
+    list.replaceChildren();
+    node(list,'h2',headings.format(new Date(day+'T00:00:00Z')));
+    const daily=events.filter(event=>event.day===day).sort((a,b)=>a.minute-b.minute);
+    if(!daily.length) node(list,'p','No sessions scheduled.').className='muted';
+    for(const event of daily){
+      const start=new Date(event.starts);
+      const end=new Date(+start+event.duration*60000);
+      const label=timeFormat.format(start)+'–'+timeFormat.format(end)+' · '+event.trainer_name+' · '+event.capacity+':1';
+      const card=calendarCard(list,label,event,owner);
+      card.className='phone-event';
+      applyColour(card,event.trainer_id,event.colour_index);
+    }
+  }
+  for(const day of days){
+    const date=new Date(day+'T00:00:00Z');
+    const control=button(picker,day.slice(-2),()=>show(day));
+    control.prepend(node(document.createDocumentFragment(),'small',headings.format(date).split(',')[0]));
+    control.setAttribute('aria-label',headings.format(date));
+    buttons.push([day,control]);
+  }
+  show(days.includes(selected)?selected:days[0]);
 }
 function applyColour(element,id,index){
   const background=colours.get(id)||trainerColour(index)[1];
