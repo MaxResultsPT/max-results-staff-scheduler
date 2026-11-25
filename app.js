@@ -118,7 +118,7 @@ async function render(){
   const days=dateRange(selected);
   const calendar=mode==='Team calendar';
   const sessions=calendar
-    ? await data(db.rpc('team_calendar_with_roster',{first_day:days[0],last_day:days.at(-1)}))
+    ? await data(db.rpc('calendar_session_details',{first_day:days[0],last_day:days.at(-1)}))
     : (await bookings(days[0],days[0])).filter(item=>item.trainer===staff.id && !item.cancelled);
   if(owner) [members,team]=await Promise.all([
     loadMembers(),
@@ -147,6 +147,9 @@ async function render(){
   node(options,'summary',owner?'Manage':'Account');
   const menu=node(options,'div'); menu.className='actions';
   if(owner){
+    button(menu,'Add class',()=>editClass());
+    button(menu,'Recurring spare spots',showSpareSpots);
+    button(menu,'Member statistics',showMemberStatistics);
     button(menu,'Manage members',manageMembers);
     button(menu,'Set member away',setMemberAway);
     button(menu,'Manage users',manageUsers);
@@ -183,12 +186,21 @@ function canMarkSession(session){
 function showBooking(panel,session,owner){
   const card=node(panel,'details');card.className='booking';
   const start=new Date(session.starts);
+  if(session.class_name){
+    node(card,'summary',timeFormat.format(start)+' · '+session.class_name+' · Class');
+    node(card,'p',session.duration+' min · Calendar only').className='muted';
+    if(owner) button(card,'Edit class',()=>editClass(session));
+    return;
+  }
+  const away=session.roster.filter(member=>member.status==='Away');
+  const occupied=session.roster.length-away.length;
   const pending=session.roster.filter(member=>member.status==='Unmarked').length;
   node(card,'summary',timeFormat.format(start)+' · '+session.capacity+':1 · '+
-    (session.cancelled?'Cancelled':pending?pending+' to mark':session.roster.length?'Complete':'Empty roster'));
+    (session.cancelled?'Cancelled':pending?pending+' to mark':session.roster.length?'Complete':'Empty roster')+
+    (away.length?' · Away: '+away.map(member=>member.members?.name||'Member').join(', '):''));
   if(canMarkSession(session) && pending) card.open=true;
   node(card,'p',session.duration+' min · '+(team.find(person=>person.id===session.trainer)?.name||staff.name)+
-    ' · '+(session.capacity-session.roster.length)+' spare').className='muted';
+    ' · '+Math.max(0,session.capacity-occupied)+' spare').className='muted';
   const roll=node(card,'div');roll.className='roll';
   const picks=session.roster.map(member=>({
     member_id:member.member_id,
@@ -208,7 +220,8 @@ function showBooking(panel,session,owner){
     },true);
   }
   if(owner && !session.cancelled){
-    if(session.roster.length<session.capacity) button(actions,'Add one-off member',()=>addOneOffMember(session.id,session.roster));
+    if(occupied<session.capacity+1) button(actions,occupied<session.capacity?'Add one-off member':'Add extra member',
+      ()=>addOneOffMember(session.id,session.roster,occupied>=session.capacity));
     button(actions,'Edit booking',()=>editBooking(session));
   }
 }
@@ -274,10 +287,10 @@ function renderCalendar(days,sessions,owner){
     }
     for(const group of groups){
       for(const event of group.entries){
-        const label=timeFormat.format(new Date(event.starts))+' · '+event.trainer_name+' · '+event.capacity+':1';
+        const label=timeFormat.format(new Date(event.starts))+' · '+event.trainer_name+' · '+sessionKind(event);
         const card=calendarCard(column,label,event,owner);
         card.className='calendar-event';
-        card.title=label+' — '+rosterText(event);
+        card.title=event.class_name?label:label+' — '+rosterText(event);
         card.style.top=(event.minute-first)+'px';
         card.style.height=Math.min(last-event.minute,Math.max(event.duration,34))+'px';
         card.style.left=(100*event.lane/group.lanes.length)+'%';
@@ -287,33 +300,46 @@ function renderCalendar(days,sessions,owner){
     }
   }
 }
+function sessionKind(event){
+  return event.class_name ? event.class_name+' (class)' : event.capacity+':1';
+}
 function rosterText(event){
-  return event.member_names?.length ? event.member_names.join(', ') : 'No members booked';
+  if(event.class_name) return '';
+  const names=event.member_names?.length ? event.member_names.join(', ') : 'No members booked';
+  return names+(event.away_names?.length?' · Away: '+event.away_names.join(', '):'');
 }
 function calendarCard(parent,label,event,owner){
   const card=button(parent,label,()=>showCalendarRoster(label,event,owner));
-  node(card,'span',rosterText(event)).className='calendar-roster';
+  if(!event.class_name) node(card,'span',rosterText(event)).className='calendar-roster';
   return card;
 }
 function showCalendarRoster(label,event,owner){
   dialog.replaceChildren();
   node(dialog,'h2',label);
-  if(event.member_names?.length){
+  if(event.class_name){
+    node(dialog,'p','Calendar only');
+  }else if(event.member_names?.length){
     const list=node(dialog,'ul');
     for(const name of event.member_names) node(list,'li',name);
   }else{
     node(dialog,'p','No members booked');
   }
+  if(event.away_names?.length) node(dialog,'p','Away: '+event.away_names.join(', '));
   const actions=node(dialog,'div'); actions.className='actions';
-  if(owner) button(actions,'Edit booking',async()=>{
+  if(owner && event.class_name) button(actions,'Edit class',()=>{
+    dialog.close();
+    editClass({...event,trainer:event.trainer_id});
+  },true);
+  if(owner && !event.class_name) button(actions,'Edit booking',async()=>{
     const session=await data(db.from('sessions').select('*,roster(member_id,status,members(name))').eq('id',event.id).single());
     dialog.close();
     editBooking(session);
   },true);
-  if(owner && (event.member_names?.length||0)<event.capacity) button(actions,'Add one-off member',async()=>{
+  if(owner && !event.class_name && event.occupied<event.capacity+1) button(actions,
+    event.available?'Add one-off member':'Add extra member',async()=>{
     const roster=await data(db.from('roster').select('member_id').eq('session_id',event.id));
     dialog.close();
-    addOneOffMember(event.id,roster);
+    addOneOffMember(event.id,roster,event.available===0);
   });
   button(actions,'Close',()=>dialog.close());
   dialog.showModal();
@@ -331,7 +357,7 @@ function renderPhoneCalendar(events,owner){
   for(const event of daily){
     const start=new Date(event.starts);
     const end=new Date(+start+event.duration*60000);
-    const label=timeFormat.format(start)+'–'+timeFormat.format(end)+' · '+event.trainer_name+' · '+event.capacity+':1';
+    const label=timeFormat.format(start)+'–'+timeFormat.format(end)+' · '+event.trainer_name+' · '+sessionKind(event);
     const card=calendarCard(list,label,event,owner);
     card.className='phone-event';
     applyColour(card,event.trainer_id,event.colour_index);
@@ -468,17 +494,17 @@ function setMemberAway(){
   button(form,'Close',()=>dialog.close());
   dialog.showModal();
 }
-function addOneOffMember(booking,roster){
+function addOneOffMember(booking,roster,extra=false){
   dialog.replaceChildren();
-  const form=node(dialog,'form');node(form,'h2','Add one-off member');
-  node(form,'p','This booking only.');
+  const form=node(dialog,'form');node(form,'h2',extra?'Add extra member':'Add one-off member');
+  node(form,'p',extra?'This adds one person above the usual capacity for this session only.':'This booking only.');
   const booked=new Set(roster.map(person=>person.member_id));
   const choices=members.filter(person=>!person.archived && !booked.has(person.id));
   const member=select(form,'Member',[['','Choose a member'],...choices.map(person=>[person.id,person.name])]);
   member.required=true;
   button(form,'Add to session',async()=>{
     if(!form.reportValidity()) return;
-    await data(db.rpc('add_one_off_member',{booking,person:Number(member.value)}));
+    await data(db.rpc('add_session_member',{booking,person:Number(member.value),allow_extra:extra}));
     dialog.close();await render();
     notice.textContent='Member added to this session.';
   },true);
@@ -531,6 +557,77 @@ function addMember(){
   },true);
   button(form,'Back to members',manageMembers);
 }
+function editClass(session){
+  dialog.replaceChildren();
+  const form=node(dialog,'form');
+  node(form,'h2',session?'Edit class':'Add class');
+  const title=field(form,'Class name','text',session?.class_name||'');
+  title.required=true;title.maxLength=100;
+  const day=field(form,'Date','date',session?dateKey(new Date(session.starts)):selected);
+  const time=field(form,'Start time','time',session?timeFormat.format(new Date(session.starts)):'06:00');
+  const duration=field(form,'Minutes','number',session?.duration??45);
+  duration.min=5;duration.max=240;
+  for(const input of [day,time,duration]) input.required=true;
+  const instructor=select(form,'Trainer',team.map(person=>[person.id,person.name]),session?.trainer);
+  button(form,'Save class',async()=>{
+    if(!form.reportValidity()) return;
+    await data(db.rpc('save_class',{booking:session?.id??null,title:title.value,instructor:instructor.value,
+      local_start:day.value+'T'+time.value,minutes:Number(duration.value)}));
+    selected=day.value;mode='Team calendar';dialog.close();await render();
+  },true);
+  if(session) button(form,'Cancel class',async()=>{
+    if(!confirm('Cancel this class?')) return;
+    await data(db.rpc('cancel_booking',{booking:session.id,following:false}));
+    dialog.close();await render();
+  });
+  button(form,'Close',()=>dialog.close());
+  dialog.showModal();
+}
+
+async function showSpareSpots(){
+  const sessions=await data(db.rpc('recurring_spare_spots'));
+  dialog.replaceChildren();
+  node(dialog,'h2','Recurring spare spots');
+  node(dialog,'p','One row per series. Regular spots show ongoing vacancies. Next session includes away members and one-off bookings.');
+  const rows=sessions.filter(item=>item.regular_spare>0 || item.next_spare>0)
+    .sort((a,b)=>b.regular_spare-a.regular_spare||Date.parse(a.starts)-Date.parse(b.starts));
+  const list=node(dialog,'div');list.className='stack';
+  if(!rows.length) node(list,'p','No spare spots in upcoming recurring sessions.');
+  for(const item of rows){
+    const date=new Date(item.starts);
+    const card=node(list,'article');
+    node(card,'h3',item.trainer_name+' · '+item.capacity+':1');
+    node(card,'p',item.regular_spare+' regular spare · '+item.next_spare+' available next session');
+    node(card,'p','Next session: '+dateKey(date)+' at '+timeFormat.format(date)).className='muted';
+  }
+  button(dialog,'Close',()=>dialog.close());
+  dialog.showModal();
+}
+
+function showMemberStatistics(){
+  dialog.replaceChildren();
+  const form=node(dialog,'form');
+  node(form,'h2','Member statistics');
+  const member=select(form,'Member',[['','Choose a member'],...members.map(person=>[person.id,person.name])]);
+  const first=field(form,'From','date',shift(today(),-89));
+  const last=field(form,'To','date',today());
+  for(const input of [member,first,last]) input.required=true;
+  const results=node(form,'section');
+  results.setAttribute('aria-live','polite');
+  button(form,'Show statistics',async()=>{
+    if(!form.reportValidity()) return;
+    if(last.value<first.value) throw new Error('Check the date range.');
+    const [row]=await data(db.rpc('member_attendance_stats',{person:Number(member.value),first_day:first.value,last_day:last.value}));
+    results.replaceChildren();
+    const list=node(results,'dl');list.className='attendance-stats';
+    for(const [key,label] of [['booked','Booked'],['attended','Attended'],['missed','Missed (no-show)'],
+      ['late_cancelled','Late cancelled'],['away','Away'],['rescheduled','Rescheduled'],['unmarked','Unmarked']]){
+      node(list,'dt',label);node(list,'dd',String(row[key]));
+    }
+  },true);
+  button(form,'Close',()=>dialog.close());
+  dialog.showModal();
+}
 function editBooking(session){
   dialog.replaceChildren();
   const form=node(dialog,'form');node(form,'h2',session?'Edit booking':'New booking');
@@ -562,7 +659,7 @@ function editBooking(session){
   let picks=[];
   function drawRoster(current){
     roster.replaceChildren();
-    picks=Array.from({length:Number(capacity.value)},(_,index)=>select(roster,'Spot '+(index+1),
+    picks=Array.from({length:Math.max(Number(capacity.value), ...current.map((value,index)=>value?index+1:0))},(_,index)=>select(roster,'Spot '+(index+1),
       [['','Spare'],...members.filter(member=>!member.archived || String(member.id)===String(current[index]))
         .map(member=>[member.id,member.name+(member.archived?' (archived)':'')])],current[index]??''));
   }
