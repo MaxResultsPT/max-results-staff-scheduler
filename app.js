@@ -326,9 +326,10 @@ function showCalendarRoster(label,event,owner){
   }
   if(event.away_names?.length) node(dialog,'p','Away: '+event.away_names.join(', '));
   const actions=node(dialog,'div'); actions.className='actions';
-  if(owner && event.class_name) button(actions,'Edit class',()=>{
+  if(owner && event.class_name) button(actions,'Edit class',async()=>{
+    const session=await data(db.from('sessions').select('id,class_name,starts,duration,trainer,series_id').eq('id',event.id).single());
     dialog.close();
-    editClass({...event,trainer:event.trainer_id});
+    editClass(session);
   },true);
   if(owner && !event.class_name) button(actions,'Edit booking',async()=>{
     const session=await data(db.from('sessions').select('*,roster(member_id,status,members(name))').eq('id',event.id).single());
@@ -569,15 +570,23 @@ function editClass(session){
   duration.min=5;duration.max=240;
   for(const input of [day,time,duration]) input.required=true;
   const instructor=select(form,'Trainer',team.map(person=>[person.id,person.name]),session?.trainer);
+  const repeat=session?.series_id?null:select(form,'Repeat',[
+    ['once','One class'],['weekly','Repeat weekly until cancelled']
+  ]);
+  const scope=session?.series_id?select(form,'Apply to',[
+    ['one','This class'],['following','This and future classes']
+  ]):null;
   button(form,'Save class',async()=>{
     if(!form.reportValidity()) return;
-    await data(db.rpc('save_class',{booking:session?.id??null,title:title.value,instructor:instructor.value,
-      local_start:day.value+'T'+time.value,minutes:Number(duration.value)}));
+    await data(db.rpc('save_calendar_class',{booking:session?.id??null,title:title.value,instructor:instructor.value,
+      local_start:day.value+'T'+time.value,minutes:Number(duration.value),
+      repeat_weekly:repeat?.value==='weekly',following:scope?.value==='following'}));
     selected=day.value;mode='Team calendar';dialog.close();await render();
   },true);
   if(session) button(form,'Cancel class',async()=>{
-    if(!confirm('Cancel this class?')) return;
-    await data(db.rpc('cancel_booking',{booking:session.id,following:false}));
+    const following=scope?.value==='following';
+    if(!confirm(following?'Cancel this class and future classes?':'Cancel this class?')) return;
+    await data(db.rpc('cancel_booking',{booking:session.id,following}));
     dialog.close();await render();
   });
   button(form,'Close',()=>dialog.close());
