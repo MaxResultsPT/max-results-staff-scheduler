@@ -272,19 +272,7 @@ function renderCalendar(days,sessions,owner){
   for(const day of days){
     const column=node(grid,'div');column.className='calendar-day';
     column.style.height=(last-first)+'px';
-    const groups=[];
-    for(const event of events.filter(item=>item.day===day).sort((a,b)=>a.minute-b.minute)){
-      const end=event.minute+Math.max(event.duration,34);
-      let group=groups.at(-1);
-      if(!group || event.minute>=group.end){
-        group={lanes:[],entries:[],end};groups.push(group);
-      }
-      let lane=group.lanes.findIndex(value=>value<=event.minute);
-      if(lane<0) lane=group.lanes.length;
-      group.lanes[lane]=end;
-      group.entries.push({...event,lane});
-      group.end=Math.max(group.end,end);
-    }
+    const groups=calendarLanes(events.filter(item=>item.day===day),34);
     for(const group of groups){
       for(const event of group.entries){
         const label=timeFormat.format(new Date(event.starts))+' · '+event.trainer_name+' · '+sessionKind(event);
@@ -299,6 +287,23 @@ function renderCalendar(days,sessions,owner){
       }
     }
   }
+}
+function calendarLanes(events,minimumMinutes=0){
+  const groups=[];
+  for(const event of [...events].sort((a,b)=>a.minute-b.minute||b.duration-a.duration)){
+    const end=event.minute+Math.max(event.duration,minimumMinutes);
+    let group=groups.at(-1);
+    if(!group || event.minute>=group.end){
+      group={lanes:[],entries:[],end};
+      groups.push(group);
+    }
+    let lane=group.lanes.findIndex(value=>value<=event.minute);
+    if(lane<0) lane=group.lanes.length;
+    group.lanes[lane]=end;
+    group.entries.push({...event,lane});
+    group.end=Math.max(group.end,end);
+  }
+  return groups;
 }
 function sessionKind(event){
   return event.class_name ? event.class_name+' (class)' : event.capacity+':1';
@@ -351,19 +356,48 @@ function renderPhoneCalendar(events,owner){
   const controls=node(section,'div'); controls.className='day-controls';
   button(controls,'Previous day',async()=>{selected=shift(selected,-1);await render();});
   button(controls,'Next day',async()=>{selected=shift(selected,1);await render();});
-  const list=node(section,'div'); list.className='stack';
-  node(list,'h2',headings.format(new Date(selected+'T00:00:00Z')));
-  const daily=events.filter(event=>event.day===selected).sort((a,b)=>a.minute-b.minute);
-  if(!daily.length) node(list,'p','No sessions scheduled.').className='muted';
-  for(const event of daily){
-    const start=new Date(event.starts);
-    const end=new Date(+start+event.duration*60000);
-    const label=timeFormat.format(start)+'–'+timeFormat.format(end)+' · '+event.trainer_name+' · '+sessionKind(event);
-    const card=calendarCard(list,label,event,owner);
-    card.className='phone-event';
-    applyColour(card,event.trainer_id,event.colour_index);
+  node(section,'h2',headings.format(new Date(selected+'T00:00:00Z')));
+  const daily=events.filter(event=>event.day===selected);
+  if(!daily.length){
+    node(section,'p','No sessions scheduled.').className='muted';
+    return;
+  }
+  const first=Math.floor(Math.min(...daily.map(event=>event.minute))/60)*60;
+  const last=Math.ceil(Math.max(...daily.map(event=>event.minute+event.duration))/60)*60;
+  const hourHeight=84;
+  const pixels=minutes=>minutes*hourHeight/60;
+  const grid=node(section,'div');grid.className='phone-time-grid';
+  grid.style.setProperty('--hour-height',hourHeight+'px');
+  const clock=node(grid,'div');clock.className='phone-clock';
+  const column=node(grid,'div');column.className='phone-time-column';
+  column.style.height=pixels(last-first)+'px';
+  for(let minute=first;minute<last;minute+=60){
+    const hour=Math.floor(minute/60)%24;
+    const tick=node(clock,'span',(hour%12||12)+(hour<12?' am':' pm'));
+    tick.style.top=pixels(minute-first)+'px';
+  }
+  for(const group of calendarLanes(daily)){
+    for(const event of group.entries){
+      const start=new Date(event.starts);
+      const end=new Date(+start+event.duration*60000);
+      const time=timeFormat.format(start)+'–'+timeFormat.format(end);
+      const title=event.class_name||event.trainer_name+' · '+sessionKind(event);
+      const label=time+' · '+event.trainer_name+' · '+sessionKind(event);
+      const card=button(column,undefined,()=>showCalendarRoster(label,event,owner));
+      card.className='phone-event';
+      card.setAttribute('aria-label',label+(event.class_name?'':' · '+rosterText(event)));
+      node(card,'strong',title);
+      if(event.class_name) node(card,'span',event.trainer_name).className='phone-event-detail';
+      else node(card,'span',rosterText(event)).className='phone-event-detail';
+      card.style.top=pixels(event.minute-first)+'px';
+      card.style.height=pixels(event.duration)+'px';
+      card.style.left=(100*event.lane/group.lanes.length)+'%';
+      card.style.width=(100/group.lanes.length)+'%';
+      applyColour(card,event.trainer_id,event.colour_index);
+    }
   }
 }
+
 function applyColour(element,id,index){
   const background=colours.get(id)||trainerColour(index)[1];
   element.style.setProperty('--event-bg',background);

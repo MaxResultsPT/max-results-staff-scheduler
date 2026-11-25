@@ -50,7 +50,14 @@ nav button[aria-pressed="true"]{background:#102941;color:white;border-color:#102
   .calendar-frame,.week-controls,.calendar-legend{display:none}
   .phone-calendar{display:block}
   .day-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
-  .phone-event{min-height:48px;padding:12px;border:0;border-radius:8px;text-align:left;background:var(--event-bg);color:var(--event-ink);overflow-wrap:anywhere}
+  .phone-time-grid{display:grid;grid-template-columns:42px minmax(0,1fr);background:white;border:1px solid #d2dfec;border-radius:10px}
+  .phone-clock,.phone-time-column{position:relative}
+  .phone-clock span{position:absolute;left:0;right:4px;padding-top:3px;text-align:right;font-size:.72rem;color:#4b6380;white-space:nowrap}
+  .phone-time-column{border-left:1px solid #d2dfec;background:repeating-linear-gradient(to bottom,#e7eef6 0 1px,transparent 1px var(--hour-height))}
+  .phone-event{position:absolute;display:block;min-height:0;padding:3px 5px;border:1px solid white;border-radius:6px;text-align:left;background:var(--event-bg);color:var(--event-ink);font-size:.76rem;line-height:1.15;overflow:hidden;overflow-wrap:anywhere}
+  .phone-event strong,.phone-event-detail{display:block}
+  .phone-event-detail{margin-top:2px}
+  .phone-event:focus-visible{z-index:1;outline:2px solid #102941;outline-offset:-2px}
 }
 .user-card p{overflow-wrap:anywhere}.user-colour{display:inline-block;padding:5px 8px;border-radius:6px;background:var(--event-bg);color:var(--event-ink)}
 .member-list{margin-top:12px}
@@ -62,5 +69,5 @@ nav button[aria-pressed="true"]{background:#102941;color:white;border-color:#102
 <header><small>Max Results Personal Training</small><h1>Staff Schedule</h1></header>
 <main><p id="notice" role="status" aria-live="polite"></p><div id="app"></div></main>
 <dialog id="bookingDialog"></dialog>
-<script type="module" src="./app.js?v=recurring-classes-1"></script>
+<script type="module" src="./app.js?v=phone-time-grid-1"></script>
 </body></html>
