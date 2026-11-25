@@ -70,7 +70,7 @@ function dateRange(day) {
   return Array.from({length:7},(_,index)=>shift(monday,index));
 }
 async function bookings(first, last) {
-  const result = await data(db.from('sessions').select('*,roster(member_id,status,members(name))')
+  const result = await data(db.from('sessions').select('*,roster(member_id,status,moved_booking,members(name))')
     .gte('starts',shift(first,-1)+'T00:00:00Z').lt('starts',shift(last,1)+'T00:00:00Z')
     .order('starts').limit(1000));
   return result.filter(item=>{
@@ -118,7 +118,7 @@ async function render(){
   const days=dateRange(selected);
   const calendar=mode==='Team calendar';
   const sessions=calendar
-    ? await data(db.rpc('calendar_session_details',{first_day:days[0],last_day:days.at(-1)}))
+    ? await data(db.rpc('calendar_sessions_with_moves',{first_day:days[0],last_day:days.at(-1)}))
     : (await bookings(days[0],days[0])).filter(item=>item.trainer===staff.id && !item.cancelled);
   if(owner) [members,team]=await Promise.all([
     loadMembers(),
@@ -193,21 +193,24 @@ function showBooking(panel,session,owner){
     return;
   }
   const away=session.roster.filter(member=>member.status==='Away');
-  const occupied=session.roster.length-away.length;
+  const moved=session.roster.filter(member=>member.status==='Rescheduled');
+  const occupied=session.roster.length-away.length-moved.length;
   const pending=session.roster.filter(member=>member.status==='Unmarked').length;
   node(card,'summary',timeFormat.format(start)+' · '+session.capacity+':1 · '+
     (session.cancelled?'Cancelled':pending?pending+' to mark':session.roster.length?'Complete':'Empty roster')+
-    (away.length?' · Away: '+away.map(member=>member.members?.name||'Member').join(', '):''));
+    (away.length?' · Away: '+away.map(member=>member.members?.name||'Member').join(', '):'')+
+    (moved.length?' · Rescheduled: '+moved.map(member=>member.members?.name||'Member').join(', '):''));
   if(canMarkSession(session) && pending) card.open=true;
   node(card,'p',session.duration+' min · '+(team.find(person=>person.id===session.trainer)?.name||staff.name)+
     ' · '+Math.max(0,session.capacity-occupied)+' spare').className='muted';
   const roll=node(card,'div');roll.className='roll';
   const picks=session.roster.map(member=>({
     member_id:member.member_id,
-    select:select(roll,member.members?.name||'Member',statuses.map(status=>[status,status]),member.status)
+    select:select(roll,member.members?.name||'Member',statuses.map(status=>[status,status]),member.status),
+    moved:member.moved_booking
   }));
   const canMark=canMarkSession(session);
-  for(const pick of picks) pick.select.disabled=!canMark;
+  for(const pick of picks) pick.select.disabled=!canMark || pick.moved;
   const actions=node(card,'div');actions.className='actions';
   if(canMark && picks.length){
     button(actions,'Mark unmarked attended',()=>picks.filter(pick=>pick.select.value==='Unmarked')
@@ -311,7 +314,7 @@ function sessionKind(event){
 function rosterText(event){
   if(event.class_name) return '';
   const names=event.member_names?.length ? event.member_names.join(', ') : 'No members booked';
-  return names+(event.away_names?.length?' · Away: '+event.away_names.join(', '):'');
+  return names+(event.absence_labels?.length?' · Away / moved: '+event.absence_labels.join(', '):'');
 }
 function calendarCard(parent,label,event,owner){
   const card=button(parent,label,()=>showCalendarRoster(label,event,owner));
@@ -329,7 +332,7 @@ function showCalendarRoster(label,event,owner){
   }else{
     node(dialog,'p','No members booked');
   }
-  if(event.away_names?.length) node(dialog,'p','Away: '+event.away_names.join(', '));
+  if(event.absence_labels?.length) node(dialog,'p','Away / moved: '+event.absence_labels.join(', '));
   const actions=node(dialog,'div'); actions.className='actions';
   if(owner && event.class_name) button(actions,'Edit class',async()=>{
     const session=await data(db.from('sessions').select('id,class_name,starts,duration,trainer,series_id').eq('id',event.id).single());
@@ -337,7 +340,7 @@ function showCalendarRoster(label,event,owner){
     editClass(session);
   },true);
   if(owner && !event.class_name) button(actions,'Edit booking',async()=>{
-    const session=await data(db.from('sessions').select('*,roster(member_id,status,members(name))').eq('id',event.id).single());
+    const session=await data(db.from('sessions').select('*,roster(member_id,status,moved_booking,members(name))').eq('id',event.id).single());
     dialog.close();
     editBooking(session);
   },true);
@@ -572,6 +575,7 @@ function manageMembers(){
         if(error) error.remove();
         show();
       };
+      if(!person.archived) button(tools,'Reschedule',()=>showMemberReschedule(person));
       button(tools,person.archived?'Restore':'Archive',()=>update(person.archived?'restore':'archive'));
       button(tools,'Delete',()=>update('delete'));
     }
@@ -629,22 +633,80 @@ function editClass(session){
 
 async function showSpareSpots(){
   const sessions=await data(db.rpc('recurring_spare_spots'));
+  const weekdays=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  const groups=weekdays.map(()=>[]);
+  for(const item of sessions){
+    if(item.regular_spare<=0) continue;
+    const date=new Date(item.starts);
+    const day=(new Date(dateKey(date)+'T00:00:00Z').getUTCDay()+6)%7;
+    groups[day].push({...item,time:timeFormat.format(date)});
+  }
   dialog.replaceChildren();
   node(dialog,'h2','Recurring spare spots');
-  node(dialog,'p','One row per series. Regular spots show ongoing vacancies. Next session includes away members and one-off bookings.');
-  const rows=sessions.filter(item=>item.regular_spare>0 || item.next_spare>0)
-    .sort((a,b)=>b.regular_spare-a.regular_spare||Date.parse(a.starts)-Date.parse(b.starts));
   const list=node(dialog,'div');list.className='stack';
-  if(!rows.length) node(list,'p','No spare spots in upcoming recurring sessions.');
-  for(const item of rows){
-    const date=new Date(item.starts);
-    const card=node(list,'article');
-    node(card,'h3',item.trainer_name+' · '+item.capacity+':1');
-    node(card,'p',item.regular_spare+' regular spare · '+item.next_spare+' available next session');
-    node(card,'p','Next session: '+dateKey(date)+' at '+timeFormat.format(date)).className='muted';
-  }
+  if(groups.every(group=>!group.length)) node(list,'p','No regular spare spots.');
+  groups.forEach((group,index)=>{
+    if(!group.length) return;
+    const section=node(list,'section');
+    node(section,'h3',weekdays[index]);
+    const slots=node(section,'ul');
+    for(const item of group.sort((a,b)=>a.time.localeCompare(b.time)||a.trainer_name.localeCompare(b.trainer_name))){
+      node(slots,'li',item.time+' · '+item.trainer_name+' · '+item.capacity+':1 · '+
+        item.regular_spare+' spare '+(item.regular_spare===1?'spot':'spots'));
+    }
+  });
   button(dialog,'Close',()=>dialog.close());
   dialog.showModal();
+}
+
+async function showMemberReschedule(person){
+  const sources=await data(db.rpc('member_reschedule_options',{person:person.id}));
+  dialog.replaceChildren();
+  const form=node(dialog,'form');
+  node(form,'h2','Reschedule '+person.name);
+  button(form,'Back to members',manageMembers);
+  if(!sources.length){
+    node(form,'p','No eligible recurring bookings found. You can move an upcoming unmarked booking or a recent booking marked Away.');
+    return;
+  }
+  const describe=item=>{
+    const date=new Date(item.starts);
+    return headings.format(new Date(dateKey(date)+'T00:00:00Z'))+' · '+timeFormat.format(date)
+      +' · '+item.trainer_name+' · '+item.capacity+':1';
+  };
+  const source=select(form,'Original recurring session',[
+    ['', 'Choose an occurrence'],
+    ...sources.map(item=>[item.id,describe(item)+(item.status==='Away'?' · Away':'')])
+  ]);
+  const day=field(form,'Make-up date','date',today());
+  day.min=today();
+  source.required=true;day.required=true;
+  const results=node(form,'div');results.className='stack';
+  results.setAttribute('aria-live','polite');
+  source.onchange=day.onchange=()=>results.replaceChildren();
+  button(form,'Find available sessions',async()=>{
+    if(!form.reportValidity()) return;
+    const sourceId=Number(source.value);
+    const chosenDay=day.value;
+    results.replaceChildren();
+    const choices=await data(db.rpc('member_makeup_slots',{
+      person:person.id,source:sourceId,chosen_day:chosenDay
+    }));
+    if(Number(source.value)!==sourceId || day.value!==chosenDay) return;
+    if(!choices.length){
+      node(results,'p','No eligible sessions with a spare spot on this date.');
+      return;
+    }
+    const target=select(results,'Make-up session',choices.map(item=>[
+      item.id,describe(item)+' · '+item.available+' spare'
+    ]));
+    button(results,'Confirm one-off move',async()=>{
+      if(!confirm('Move '+person.name+' to this session for this week only?')) return;
+      await data(db.rpc('reschedule_member',{person:person.id,source:sourceId,destination:Number(target.value)}));
+      selected=chosenDay;mode='Team calendar';dialog.close();await render();
+      notice.textContent=person.name+' was rescheduled for this occurrence.';
+    },true);
+  });
 }
 
 function showMemberStatistics(){
