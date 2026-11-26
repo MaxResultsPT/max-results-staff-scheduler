@@ -149,6 +149,7 @@ async function render(){
   if(owner){
     button(menu,'Add class',()=>editClass());
     button(menu,'Recurring spare spots',showSpareSpots);
+    button(menu,'Weekly training hours',showWeeklyTrainingHours);
     button(menu,'Member statistics',showMemberStatistics);
     button(menu,'Manage members',manageMembers);
     button(menu,'Set member away',setMemberAway);
@@ -629,6 +630,55 @@ function editClass(session){
   });
   button(form,'Close',()=>dialog.close());
   dialog.showModal();
+}
+
+function mondayOf(day){
+  const weekday=new Date(day+'T00:00:00Z').getUTCDay();
+  return shift(day,-((weekday+6)%7));
+}
+
+function formatTrainingMinutes(minutes){
+  return Math.floor(minutes/60)+' h '+String(minutes%60).padStart(2,'0')+' min';
+}
+
+async function showWeeklyTrainingHours(){
+  let week=mondayOf(today());
+  dialog.replaceChildren();
+  node(dialog,'h2','Weekly training hours');
+  node(dialog,'p','Scheduled PT and class time, Monday to Sunday in Melbourne.');
+  const date=field(dialog,'Choose a date in the week','date',week);
+  const actions=node(dialog,'div');actions.className='actions';
+  const previous=button(actions,'Previous week',()=>load(shift(week,-7)));
+  const next=button(actions,'Next week',()=>load(shift(week,7)));
+  const results=node(dialog,'section');
+  results.setAttribute('aria-live','polite');
+  button(dialog,'Close',()=>dialog.close());
+  date.onchange=()=>{if(date.value) run(()=>load(mondayOf(date.value)));};
+  async function load(requested){
+    previous.disabled=next.disabled=date.disabled=true;
+    try{
+      const rows=await data(db.rpc('weekly_pt_hours',{week_start:requested}));
+      week=requested;
+      date.value=week;
+      results.replaceChildren();
+      const describe=day=>headings.format(new Date(day+'T00:00:00Z'));
+      node(results,'h3',describe(week)+' – '+describe(shift(week,6)));
+      const list=node(results,'dl');list.className='attendance-stats';
+      let total=0;
+      for(const row of rows){
+        const minutes=Number(row.total_minutes);
+        total+=minutes;
+        node(list,'dt',row.trainer_name+' · '+row.session_count+' '+(Number(row.session_count)===1?'session':'sessions'));
+        node(list,'dd',formatTrainingMinutes(minutes));
+      }
+      node(list,'dt','Total training hours');
+      node(list,'dd',formatTrainingMinutes(total));
+    }finally{
+      previous.disabled=next.disabled=date.disabled=false;
+    }
+  }
+  dialog.showModal();
+  await load(week);
 }
 
 async function showSpareSpots(){
