@@ -597,6 +597,31 @@ function addMember(){
   },true);
   button(form,'Back to members',manageMembers);
 }
+function weeklyOccurrenceCount(first,last){
+  if(!first || !last || last<first) return 0;
+  return Math.floor((Date.parse(last+'T00:00:00Z')-Date.parse(first+'T00:00:00Z'))/604800000)+1;
+}
+
+function repeatEndDate(form,choice,day){
+  const end=field(form,'Repeat until (inclusive)','date');
+  const preview=node(form,'p');preview.className='muted';
+  preview.setAttribute('aria-live','polite');
+  function sync(){
+    const enabled=choice?.value==='until';
+    end.disabled=!enabled;
+    end.required=enabled;
+    end.parentElement.hidden=!enabled;
+    preview.hidden=!enabled;
+    end.min=day.value;
+    const count=weeklyOccurrenceCount(day.value,end.value);
+    end.setCustomValidity(enabled && count>52?'Choose an end date within 52 weekly occurrences.':'');
+    preview.textContent=count?count+' weekly '+(count===1?'occurrence':'occurrences'):'Choose an end date.';
+  }
+  for(const input of [choice,day,end]) input?.addEventListener('change',sync);
+  sync();
+  return end;
+}
+
 function editClass(session){
   dialog.replaceChildren();
   const form=node(dialog,'form');
@@ -610,16 +635,22 @@ function editClass(session){
   for(const input of [day,time,duration]) input.required=true;
   const instructor=select(form,'Trainer',team.map(person=>[person.id,person.name]),session?.trainer);
   const repeat=session?.series_id?null:select(form,'Repeat',[
-    ['once','One class'],['weekly','Repeat weekly until cancelled']
+    ['once','One class'],...(!session?[['until','Repeat weekly until a date']]:[]),['weekly','Repeat weekly until cancelled']
   ]);
   const scope=session?.series_id?select(form,'Apply to',[
     ['one','This class'],['following','This and future classes']
   ]):null;
+  const end=repeatEndDate(form,repeat,day);
   button(form,'Save class',async()=>{
     if(!form.reportValidity()) return;
-    await data(db.rpc('save_calendar_class',{booking:session?.id??null,title:title.value,instructor:instructor.value,
-      local_start:day.value+'T'+time.value,minutes:Number(duration.value),
-      repeat_weekly:repeat?.value==='weekly',following:scope?.value==='following'}));
+    const settings={title:title.value,instructor:instructor.value,
+      local_start:day.value+'T'+time.value,minutes:Number(duration.value)};
+    if(repeat?.value==='until'){
+      await data(db.rpc('save_class_until',{...settings,last_day:end.value}));
+    }else{
+      await data(db.rpc('save_calendar_class',{...settings,booking:session?.id??null,
+        repeat_weekly:repeat?.value==='weekly',following:scope?.value==='following'}));
+    }
     selected=day.value;mode='Team calendar';dialog.close();await render();
   },true);
   if(session) button(form,'Cancel class',async()=>{
@@ -795,8 +826,9 @@ function editBooking(session){
   const capacity=select(form,'Session size',[['1','1:1'],['3','3:1'],['6','6:1']],session?.capacity??3);
   const recurrence=select(form,session?'Weekly repeat':'Repeat',session
     ? [['keep','Keep current repeat settings'],['indefinite','Repeat weekly until cancelled']]
-    : [['single','One session'],['finite','Repeat for a set number of weeks'],['indefinite','Repeat weekly until cancelled']]);
+    : [['single','One session'],['finite','Repeat for a set number of weeks'],['until','Repeat weekly until a date'],['indefinite','Repeat weekly until cancelled']]);
   const repeat=session?null:field(form,'Number of weekly occurrences','number',2);
+  const end=repeatEndDate(form,recurrence,day);
   const scope=session?.series_id?select(form,'Apply to',[['one','This session'],['following','This and future sessions']]):null;
   function syncRepeat(){
     if(repeat){
@@ -826,7 +858,8 @@ function editBooking(session){
     await data(db.rpc('save_booking',{booking:session?.id??null,following:scope?.value==='following' || recurrence.value==='indefinite',
       trainer_id:trainer.value,local_start:day.value+'T'+time.value,minutes:Number(duration.value),
       places:Number(capacity.value),member_ids:picks.map(pick=>pick.value).filter(Boolean).map(Number),
-      repeat_weeks:recurrence.value==='indefinite'?0:recurrence.value==='finite'?Number(repeat.value):1}));
+      repeat_weeks:recurrence.value==='indefinite'?0:recurrence.value==='until'
+        ?weeklyOccurrenceCount(day.value,end.value):recurrence.value==='finite'?Number(repeat.value):1}));
     selected=day.value;dialog.close();await render();
   },true);
   if(session) button(actions,'Cancel booking',async()=>{
