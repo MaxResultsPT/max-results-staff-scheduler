@@ -449,6 +449,15 @@ async function manageUsers(){
       const tools=node(card,'div');tools.className='actions';
       button(tools,'Edit name or colour',()=>editUserProfile(user));
       button(tools,'Reset password',()=>resetUserPassword(user));
+      if(user.role==='trainer' && user.id!==staff.id){
+        button(tools,'Delete trainer',async()=>{
+          if(!confirm('Permanently delete '+user.name+' and their sign-in account?')) return;
+          await userManagement({action:'delete',id:user.id});
+          await render();
+          await manageUsers();
+          node(dialog,'p',user.name+' was deleted.').setAttribute('role','status');
+        });
+      }
     }
   }
   if(!dialog.open) dialog.showModal();
